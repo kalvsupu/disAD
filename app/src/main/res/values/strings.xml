@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">disAD</string>
+    <string name="app_subtitle">免 Root · 本地 DNS 过滤 + 无障碍辅助</string>
+    <string name="acc_desc">DNS 拦截的兜底：出现广告时自动点击「跳过 / 关闭广告」。只有在你选择的系别范围内、并且屏幕上确实出现广告时才动作。不读取输入内容、不采集任何数据、不联网。</string>
+</resources>

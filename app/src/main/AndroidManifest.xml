@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ============================================================================
+    disAD · 免 Root 版
+  ============================================================================
+   实现方式：本地 VpnService + DNS 层拦截
+     · 不 root、不 hook 任何 App
+     · 只把「DNS 查询」这一种 UDP 报文引入隧道，其它流量完全不受影响
+     · 广告域名解析被拒绝 → 广告 SDK 拿不到配置与素材 → 开屏广告不会被创建
+     · 另有可选的「无障碍自动跳过」兜底（只在百度系 App 里找右上角"跳过"并点它）
+
+   权限说明（6 个，全部为功能必需）：
+     INTERNET                     —— 仅用于把 DNS 查询转发给你选择的上游解析器
+     FOREGROUND_SERVICE(+SPECIAL_USE) —— 常驻通知，避免拦截被系统杀后台
+     POST_NOTIFICATIONS           —— Android 13+ 显示常驻通知 / 无障碍失效提醒
+     RECEIVE_BOOT_COMPLETED       —— 可选的开机自启
+     REQUEST_IGNORE_BATTERY_OPTIMIZATIONS —— 可选，申请加入电池优化白名单
+   没有：QUERY_ALL_PACKAGES、没有存储、没有位置、没有通讯录。
+  ============================================================================
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 读取手机当前网络实际使用的 DNS，作为转发失败时的兜底（不加路由，直连出口） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 可选：申请加入电池优化白名单，降低国产 ROM 后台被杀 / 无障碍被系统关掉的概率 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!--
+      只声明需要「看见」的包名，用于把它们加入 VPN 作用范围。
+      不使用 QUERY_ALL_PACKAGES，因此看不到也管不着用户的其它应用。
+    -->
+    <queries>
+        <package android:name="com.baidu.BaiduMap" />
+        <package android:name="com.baidu.BaiduMap.pad" />
+        <package android:name="com.baidu.netdisk" />
+        <package android:name="com.baidu.tieba" />
+        <package android:name="com.baidu.searchbox" />
+        <package android:name="com.baidu.searchbox.lite" />
+        <package android:name="com.baidu.haokan" />
+        <package android:name="com.baidu.homework" />
+        <package android:name="com.baidu.yuedu" />
+        <package android:name="com.baidu.vvideo" />
+        <package android:name="com.xunmeng.pinduoduo" />
+        <package android:name="com.xunmeng.pinduoduo.lite" />
+        <package android:name="com.duoduo.child.story" />
+        <!-- 摇一摇辅助里需要判断这些 App 是否已安装，才能跳到它的设置页 -->
+        <package android:name="com.tencent.mm" />
+        <package android:name="com.tencent.mobileqq" />
+        <package android:name="com.tencent.qqmusic" />
+        <package android:name="com.tencent.mtt" />
+        <package android:name="com.taobao.taobao" />
+        <package android:name="com.eg.android.AlipayGphone" />
+        <package android:name="com.ss.android.ugc.aweme" />
+        <package android:name="com.smile.gifmaker" />
+        <package android:name="com.sina.weibo" />
+        <package android:name="com.jingdong.app.mall" />
+        <package android:name="com.xingin.xhs" />
+        <package android:name="com.autonavi.minimap" />
+        <package android:name="tv.danmaku.bili" />
+        <package android:name="com.zhihu.android" />
+        <package android:name="com.UCMobile" />
+        <package android:name="com.miui.cloudservice" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DisAD">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ============ 核心：本地 VPN 服务（DNS 层拦截） ============ -->
+        <service
+            android:name=".vpn.AdBlockVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="本地 DNS 广告拦截（用户本机自用，不采集任何数据）" />
+        </service>
+
+        <!-- ============ 可选：无障碍自动跳过（DNS 拦截的兜底） ============
+             只在百度系 App 出现"跳过"按钮时自动点它，需要用户在系统
+             「无障碍 / 已安装的服务」里手动开启，任何时候都能关掉。 -->
+        <service
+            android:name=".SkipAdAccessibilityService"
+            android:enabled="true"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- ============ 可选：应用商店跳转拦截（默认关闭） ============
+             开启后本 App 会出现在 market:// 的「打开方式」列表里；
+             选择它并设为默认，广告拉起应用商店的动作就会被拦下。
+             默认 android:enabled="false"，由设置界面的开关动态启用。 -->
+        <activity
+            android:name=".MarketInterceptActivity"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:priority="0">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="market" />
+                <data android:scheme="samsungapps" />
+                <data android:scheme="appmarket" />
+                <data android:scheme="mimarket" />
+                <data android:scheme="oppomarket" />
+                <data android:scheme="vivomarket" />
+            </intent-filter>
+        </activity>
+
+        <!-- ============ 可选：开机自启（默认关闭，由开关控制） ============ -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

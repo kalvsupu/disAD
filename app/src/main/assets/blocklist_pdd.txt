@@ -1,0 +1,31 @@
+# ============================================================================
+#  拼多多系拦截清单（由「拼多多系」开关控制）
+# ============================================================================
+#  为什么单独成组：
+#    拼多多的广告素材大量出现在**别的 App** 里（开屏/信息流投放素材），
+#    素材 CDN 用的就是下面这些域名。把它们拦住，别处的拼多多广告就拉不到素材。
+#
+#  ⚠ 代价：拼多多 App 自身的图片/商品图也走这些 CDN，
+#    所以「拼多多系」开着的时候拼多多 App 可能会显示异常。
+#    按设计，用拼多多时把这个开关关掉即可。
+# ============================================================================
+
+# 主体域名
+pinduoduo.com
+yangkeduo.com
+pddpic.com
+pddpicvideo.com
+pddcdn.com
+pddugc.com
+duoduoyou.com
+pinduoduo.net
+
+# 素材 / 接口 / 埋点
+img.pddpic.com
+funimg.pddpic.com
+promotion.pinduoduo.com
+ads.pinduoduo.com
+ad.pinduoduo.com
+track.pinduoduo.com
+log.pinduoduo.com
+apiv2.pinduoduo.com

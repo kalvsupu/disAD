@@ -1,0 +1,212 @@
+# ============================================================================
+#   disAD · 默认拦截清单
+# ============================================================================
+#  规则格式：
+#    · 一行一个域名，不带 http、不带路径
+#    · 命中该域名及其所有子域（mobads.baidu.com 同时覆盖 a.b.mobads.baidu.com）
+#    · # 开头为注释，空行忽略
+#
+#  ★ 除了这份清单，程序里还内置了一组「默认关键字规则」（见 BlockList.kt 的
+#    KEYWORDS_ALWAYS）：域名里出现 mobads / antpcdn / advlion / mentamob /
+#    adsmind / lrtb / gdtimg / pglstatp / ctobsnssdk / beizi / miaozhen … 等
+#    广告平台标识的一律拦截。所以这里只需要列"不带这些标识"的域名。
+#
+#  本清单来源：2026-09 在百度地图 / 百度贴吧 / 百度网盘上逐条实测抓取。
+# ============================================================================
+
+# ========== A. 百度自家广告 / 联盟（百青藤 / cpro / 积分墙） ==========
+mobads.baidu.com
+mobads-logs.baidu.com
+pos.baidu.com
+cpro.baidu.com
+cpro.baidustatic.com
+cbjs.baidu.com
+union.baidu.com
+union-image.baidu.com
+nsclick.baidu.com
+sp0.baidu.com
+sp1.baidu.com
+sp2.baidu.com
+s0-ant.baidu.com
+antpcdn.com
+integralwall.baidu.com
+
+# ========== B. 实测抓到的第三方广告平台 ==========
+# AdVlion（美团闪购/闲鱼这类品牌开屏的投放方）
+advlion.com
+vlion.cn
+# MentaMob
+mentamob.com
+# 广告素材加速节点（形如 219-138-227-208-yff21fdb.yingt.asia）
+yingt.asia
+# 投放 / DSP / 素材
+taqing.com
+hubcloud.com.cn
+ubixioe.com
+bytedgoofy.com
+# SSP / 广告投放与归因
+lrtb.com
+igrowth.cn
+yunxish.cn
+yunxish.com
+adintl.cn
+beizi.biz
+# 第三方广告监测
+miaozhen.com
+# 素材 CDN
+gdtimg.com
+ugdtimg.com
+# 穿山甲（Pangle）
+pangolin-sdk-toutiao.com
+pangolin-sdk-toutiao-b.com
+pglstatp-toutiao.com
+ad.toutiao.com
+ctobsnssdk.com
+# 快手 / 优量汇 SDK 接口
+e.kuaishou.com
+sdk.e.qq.com
+# 广告落地页 / 跳转中继
+qchannel03.cn
+66mobi.com
+
+# ========== C. AM 系（AdsMind / 艾德思奇）广告 ==========
+# 百度地图 / 网盘开屏上打「AM广告」水印的那些，素材走广点通图床，
+# 配置与上报走下面这些；关键字 adsmind / gdtimg / ugdtimg 已覆盖大部分，
+# 这里再补几条明确的，避免子域变体漏网。
+adsmind.com
+adsmind.cn
+adsmind.ugdtimg.com
+adsmind.gdtimg.com
+adv.adsmind.com
+track.adsmind.com
+
+# ========== D. 微信 / 小程序里的广告 ==========
+# 小程序里的广告位（banner / 激励视频 / 插屏）走的是微信广告与广点通，
+# 下面这些是它们的投放、素材与归因端点。
+#
+# ⚠ 刻意**不动**下面这些，它们是微信和小程序的本体资源，拦了会把微信搞坏：
+#     res.wx.qq.com     微信/小程序的 JS 与图片资源
+#     wxapp.tc.qq.com   小程序代码包下载
+#     mp.weixin.qq.com  公众号 / 小程序平台
+#     mmbiz.qpic.cn     公众号图片
+#     short.weixin.qq.com  微信通信
+ad.weixin.qq.com
+ads.weixin.qq.com
+adnet.qq.com
+pgdt.gtimg.com
+pgdt.gtimg.cn
+pgdt.qq.com
+img.gdt.qq.com
+win.gdt.qq.com
+adx.gdt.qq.com
+# 广告归因埋点（腾讯灯塔）：拦了只是少一份统计，不影响任何功能
+oth.eve.mdt.qq.com
+
+# ========== E. 微信 / 小程序（2026-10-01 实机抓取）==========
+# 抓取场景：微信 + 打开一个小程序 + 出现 2~3 个广告，全程只解析了 21 个域名。
+#
+# ★★ 关键发现：dns.weixin.qq.com.cn 是微信自带的 HTTPDNS。
+#    微信的域名解析走它自己，**根本不经过系统 DNS** —— 广告域名是它自己解析出来的，
+#    我们的 DNS 拦截自然一个都碰不到。这就是"微信广告一个都拦不住"的真正原因。
+#
+#    ⚠ 2026-10-01 决定：**不拦它**。
+#      理由：拦掉它只是"逼微信回落系统 DNS"，收益不明确（QQ音乐实测下来，
+#      广告最终是被无障碍点掉的，不是被拦掉的），但它会让微信失去防 DNS 劫持的能力，
+#      在某些运营商网络下可能解析到被劫持的地址 —— 得不偿失。
+#      同类还有 httpdns.kg.qq.com（QQ音乐）、wxa.wxs.qq.com（小程序数据上报），
+#      都从拦截清单里移除了。
+# dns.weixin.qq.com.cn
+# httpdns.kg.qq.com
+# wxa.wxs.qq.com
+
+# ---------------------------------------------------------------------------
+# ⚠ 下面是本次实测出现过的**微信本体域名，绝对不要拦**（记在这里当备忘，
+#   也方便以后加规则时对照；它们都不含广告关键字，不会被关键字误伤）：
+#   szlong.weixin.qq.com          微信长连接
+#   szextshort.weixin.qq.com      微信通信
+#   szilinkshort.weixin.com       微信短链
+#   paydns.wechatpay.cn           微信支付
+#   sh.servicewechat.com          微信客服
+#   shp.qpic.cn                   图片 CDN
+#   wximg.wxs.qq.com              小程序图片
+#   wxsmw.wxs.qq.com              小程序素材
+#   appcfg.v.qq.com               腾讯配置下发
+#   cdnimg.3g.qq.com              腾讯图片 CDN
+#   search.wxqcloud.qq.com        小程序云开发
+#
+#   api.lelaer.com / lelaer.com   ← 已确认：这是「提瓦特助手」小程序自己的后端，
+#                                  拦了小程序的抽卡分析等功能就用不了，**不要拦**。
+#                                  （2026-10-01 实测确认）
+#
+#   ★★ 2026-10-01：自动学习曾经把它自己的"误判"加进了拦截名单，以下是**误加**的，
+#      全部**不要拦**（它们的共同点是"某个 App 正常工作的基础"）：
+#        paydns.wechatpay.cn            微信支付
+#        dns.weixin.qq.com.cn           微信自带 HTTPDNS
+#        szlong.weixin.qq.com           微信长连接
+#        szextshort.weixin.qq.com       微信通信
+#        pull-*.wxlivecdn.com           微信直播/视频 CDN
+#        apd-pcdnwx*.teg.tencent-cloud.net  微信CDN节点
+#        s1.hdslb.com / boss.hdslb.com  B站 图片与资源 CDN
+#        c.y.qq.com / music.y.qq.com / shc.y.qq.com / shu6.y.qq.com
+#        monitor.music.qq.com / report.tencentmusic.com / api.tencentmusic.com
+#        lhp.map.qq.com / logs.game.qq.com / analytics.map.qq.com
+#        appsupport.qq.com / monitor1.qq.com / cdnimg.3g.qq.com / m.qpic.cn
+#        sdk.extra.talk.getui.com|.net / sdk.extra.talk.gepush.com   推送 SDK
+#        logservice1.hicloud.com        华为云日志
+#        app.market.xiaomi.com / sdkconfig.xiaomi.com / resolver.msg.xiaomi.net
+#        requality.android.shouji.sogou.com / v2.get.sogou.com
+#        zhiyan.monitor.tencent-cloud.net
+#        grs.dbankscloud.com / healthcommon.dbankscloud.com
+#      程序侧已同步收紧：自动学习现在**必须域名自带广告特征词**，且不碰已知的基础设施后缀。
+# ---------------------------------------------------------------------------
+
+# ========== G. 2026-10-01 实测补充（只收"确实是广告"的）==========
+adv.sec.miui.com          # MIUI 广告服务
+ads-log.huolala.cn        # 广告日志
+sdk.zhangyuyidong.cn      # 广告 SDK
+sdklog.zhangyuyidong.cn
+ssr.1rtb.com              # 1rtb 广告交易平台
+
+
+# ========== F. QQ音乐 / 腾讯音乐（2026-10-01 实机抓取，90 个域名）==========
+# 抓取场景：打开 QQ音乐出现开屏广告。实测结论：DNS 拦不住它的开屏，
+# 但**无障碍把「跳过」点掉了** —— 腾讯系这类 App，界面层才是主力。
+#
+# 所以这里只保留"拦了绝对没副作用"的自营广告与埋点：
+# QQ音乐自营广告（域名里直接带 ad，拦了不影响播放和图片）
+ad.tencentmusic.com
+adcdn6.tencentmusic.com
+tmead.y.qq.com
+
+# 广点通的广告点击 / 统计端点（gdt.qq.com 家族已被关键字覆盖，这两条是 l.qq.com 家族）
+p.l.qq.com
+us.l.qq.com
+
+# 埋点 / 遥测（拦了只是少统计）
+oth.str.mdt.qq.com
+yyb.eve.mdt.qq.com
+h.trace.qq.com
+galileotelemetry.tencent.com
+
+# 本次抓到的广点通域名，**已被现有关键字覆盖**，列在这里便于核对：
+#   c.gdt.qq.com / ii.gdt.qq.com / rpt.gdt.qq.com / v.gdt.qq.com / vr.gdt.qq.com
+#   v2ii.gdt.qq.com / xc.gdt.qq.com / xs.gdt.qq.com      → 关键字 gdt.qq.com
+#   sdkreport.e.qq.com / tangram.e.qq.com                → 关键字 e.qq.com
+#   adsmind.gdtimg.com / union.gdtimg.com                → 关键字 adsmind / gdtimg
+#   pgdt.gtimg.cn                                        → 清单内已有
+#   tdid.m.qq.com                                        → 清单内已有
+#
+# ---------------------------------------------------------------------------
+# ⚠ 下面是本次实测出现过的 **QQ音乐本体域名，绝对不要拦**：
+#   y.qq.com 家族：c / c6 / u / u6 / vc / wns / fastest / stat6 / music-file6 /
+#                  szc / szc6 / szu / szu6 / shu / shu6 / shc / shc6
+#   music.qq.com：monitor.music.qq.com / shugcup / szugcup / ugcup.music.qq.com
+#   stream.qqmusic.qq.com：sjy6 / ws / ws6（音频流）
+#   wns6.kg.qq.com / wns.y.qq.com / wnsop.twns.qq.com / twns.p2ptun.qq.com（WNS 网关）
+#   aqqmusic.tc.qq.com / appsupport.qq.com / cgi.connect.qq.com
+#   i.gtimg.cn / y.gtimg.cn（图片 CDN，注意关键字是 gdtimg 不是 gtimg，不会误伤）
+#   api.tencentmusic.com / report.tencentmusic.com / vv.video.qq.com
+# ---------------------------------------------------------------------------
+
+
+

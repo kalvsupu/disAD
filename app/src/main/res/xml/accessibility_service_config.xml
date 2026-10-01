@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  无障碍服务配置
+
+  · 只订阅「窗口变化」两类事件，用于判断广告是否出现；
+  · canRetrieveWindowContent：读取界面节点（找"跳过 / 关闭"按钮）；
+  · canPerformGestures：节点不可点击时，直接在该位置模拟一次点按；
+  · flagReportViewIds：拿到控件的 resource-id，很多广告 SDK 的跳过按钮
+    没有文字但 id 里带 skip（例如 xxx:id/skip_btn），靠 id 才能识别；
+  · flagRetrieveInteractiveWindows：老年人模式下需要遍历所有窗口，
+    才能把「居中弹窗」和它后面的正常界面区分开，避免点到弹窗背后的内容；
+  · 不做 packageNames 限制，改由代码按「作用 App 清单」过滤，
+    这样用户在设置里追加包名也能生效。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/acc_desc"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.baidukiller.lite.MainActivity"
+    android:summary="@string/app_name" />

@@ -1,0 +1,68 @@
+# ============================================================================
+#  disAD · 常驻严格清单
+# ============================================================================
+#  这一组是"更激进的通用广告特征"，随默认清单一同常驻启用
+#  （关键字：adx / ads. / advert / toutiao / kwai / e.qq.com / ad.xiaomi …），
+#  并追加本文件里的域名。
+#
+#  ⚠ 本文件里的域名可能同时被正常业务用到（HTTPDNS、统计、视频 CDN 等），
+#    若发现某个 App 功能异常，把对应域名删掉即可。
+# ============================================================================
+
+# ---- 百度广告 / 统计的其它端点 ----
+dup.baidustatic.com
+hm.baidu.com
+hmma.baidu.com
+bes-mtj.baidu.com
+httpdns.baidu.com
+httpdns.baidubce.com
+cbjg.baidu.com
+sofire-h3.baidu.com
+# 疑似百度广告后台 / 广告审核（名称含义不确定，放严格模式里观察）
+adam.baidu.com
+afd.baidu.com
+afdconf.baidu.com
+audittest.baidu.com
+
+# ---- 广告 SDK 日志 / 其它投放方 ----
+sdklog.zhangyuyidong.cn
+tap-dsp.iem.taptap.cn
+sdktmp.hubcloud.com.cn
+rpe.xdplt.com
+
+# ---- 广告视频素材 CDN ----
+# 这两个 CDN 也承载抖音/快手的正常视频内容，所以放在严格模式里。
+pull.yximgs.com
+pull.etoote.com
+lf-cdn-tos.bytescm.com
+
+# ---- 第三方广告监测（小米设备上的广告日志） ----
+ad.xiaomi.com
+
+# ---- YY 广告联盟 ----
+union-dracoapi.yy.com
+union-httpdns.gslb.yy.com
+
+# ---- 优量汇 / 广点通（腾讯） ----
+gdt.qq.com
+v.gdt.qq.com
+e.qq.com
+ad.qq.com
+
+# ---- 快手联盟 ----
+adkwai.com
+ad.kwai.com
+kwaipros.com
+
+# ---- Sigmob / Mintegral / TradPlus ----
+sigmob.com
+api.sigmob.com
+mbridge.com
+mintegral.com
+net.mintegral.com
+tradplusad.com
+adx.tradplusad.com
+
+# ---- AdMob / Google 广告 ----
+googleads.g.doubleclick.net
+pagead2.googlesyndication.com

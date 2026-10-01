@@ -1,0 +1,2 @@
+-keep class com.baidukiller.lite.** { *; }
+-dontwarn org.jetbrains.annotations.**
