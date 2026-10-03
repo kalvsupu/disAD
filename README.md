@@ -85,7 +85,7 @@ DNS 拦不住的那部分，交给无障碍服务在界面上点掉。它只认�
 - **微信内的所有广告**：微信在前台时，无障碍树里只有 **1 个节点**（根节点，0 个子节点），遍历所有窗口结果一致 —— 连"屏幕上有没有『跳过』按钮"都无从得知。
 - **摇一摇广告**：传感器触发，不经过网络。
 
-**完整原理、实测数据，以及"为什么不做截图 + OCR 兜底"的评估结论 → [TECHNICAL.md](TECHNICAL.md)**
+**完整原理与实测数据 → [TECHNICAL.md](TECHNICAL.md)**
 
 > 另注：App 会把广告素材缓存在本地，已经下载好的广告**断网也会再显示一次**。装上之后建议先清一次目标 App 的缓存。
 
@@ -174,7 +174,7 @@ app/src/main/assets/
 
 **Features.** Scope switches (Baidu family / everything else / Pinduoduo), per-app scope, elder mode, live stats, on-device domain log, conservative auto-learning with a built-in infrastructure protection list, rule self-test, custom domains and whitelist, app-store jump interception, boot autostart, and guidance for sensor-triggered "shake" ads.
 
-**Known limits.** Tencent apps (WeChat, QQ, QQ Music) use self-hosted HTTPDNS, proprietary long connections and same-domain first-party ads; inside WeChat the accessibility tree exposes a single node, so nothing can be tapped at all. Shake-to-jump ads are sensor-triggered and never touch the network. **Full analysis, measurements, and why we deliberately do not fall back to screenshot + OCR → [TECHNICAL.md](TECHNICAL.md)**
+**Known limits.** Tencent apps (WeChat, QQ, QQ Music) use self-hosted HTTPDNS, proprietary long connections and same-domain first-party ads; inside WeChat the accessibility tree exposes a single node, so nothing can be tapped at all. Shake-to-jump ads are sensor-triggered and never touch the network. **Full analysis and measurements → [TECHNICAL.md](TECHNICAL.md)**
 
 **Build.** JDK 17 + Android SDK 34: `./gradlew assembleRelease`. The repository contains no signing key, so the release output is **unsigned** — sign it yourself. Android Gradle Plugin rejects non-ASCII project paths; see `gradle.properties` for a junction/symlink workaround.
 
