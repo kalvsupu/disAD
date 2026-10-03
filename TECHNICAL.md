@@ -33,23 +33,14 @@
 - **实测结果**：微信在前台时，无障碍树里**只有 1 个节点**（根节点，0 个子节点）。遍历所有窗口（`getWindows()`，含窗口内容与其它窗口）结果一致。
 - 也就是说，我们**连"屏幕上有没有『跳过』按钮"都无从得知**，更谈不上点击。这也不是权限或配置能绕开的限制 —— 任何依赖无障碍读取界面的自动化在微信内都会失明。
 - **因此微信内**的开屏广告、小程序自营广告、朋友圈广告**都无法自动跳过**。
-- **我们不做"截图 + 本地 OCR"兜底**，评估后放弃，理由是投入产出比不成立：
-  - APK 体积从不到 1 MB 涨到 15 MB 以上（离线中文 OCR 模型必须打包，否则国内设备拉不到模型）；
-  - 需要把**整个屏幕内容**读进内存（聊天记录、相册、支付页都在内），隐私承诺从"只读控件属性"降级为"会读取屏幕内容"，无障碍设置页也会出现"此服务可以截取屏幕内容"的提示；
-  - `takeScreenshot()` 需要 Android 11 及以上，约 5~8% 设备直接不可用；
-  - 若目标窗口设了 `FLAG_SECURE`，截出来仍是黑屏 —— 钱花了，问题还在。
+
 
 > **Why accessibility automation cannot act inside WeChat**
 >
 > - **Measured:** with WeChat in the foreground, its accessibility tree contains exactly **one node** (the root, with zero children). Iterating every window (`getWindows()`, including window content and other windows) gives the same result.
 > - So we cannot even learn **whether a "Skip" button exists on screen**, let alone tap it. No permission or configuration works around this: any automation that reads the screen through accessibility is blind inside WeChat.
 > - **Consequently**, splash ads, mini-program ads and Moments ads inside WeChat **cannot be skipped automatically**.
-> - **We do not fall back to screenshot + on-device OCR.** We evaluated it and dropped it, because the trade-off does not hold:
->   - APK size would grow from under 1 MB to 15 MB+ (an offline Chinese OCR model must be bundled; in mainland China the on-demand model download is not reachable);
->   - it would require reading **entire screen contents** into memory (chats, photos, payment pages). The privacy promise would degrade from "reads widget attributes only" to "reads screen contents", and Android's accessibility settings page would flag the service as able to capture screen content;
->   - `takeScreenshot()` requires Android 11+, leaving roughly 5–8% of devices unsupported;
->   - if the target window sets `FLAG_SECURE`, the screenshot is black anyway — all cost, no gain.
-
+> - 
 ---
 
 ## 3. 那还剩什么能用
