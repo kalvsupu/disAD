@@ -1,4 +1,4 @@
-# disAD
+# disAD（即将更新加入ocr，ai审查等功能）
 
 **免 Root 的本地广告拦截 · Root-free local ad blocker**
 
