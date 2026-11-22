@@ -2,9 +2,9 @@
 
 **两种广告拦不住，原因不是规则写得不够多，而是它们绕开了我们仅有的两层手段。**
 
-本项目只有两层能力：本地 DNS 过滤（VpnService）与无障碍辅助点击。下面两条边界都属于**方案本身的极限**，不是待修的缺陷。
+本项目有三层能力：本地 DNS 过滤（VpnService）、无障碍辅助点击、以及可选的本地 OCR 兜底（截图 + 几何候选 + 仅识别）。前两条边界是**方案本身的极限**，不是待修的缺陷；第三条（OCR）是对"无障碍失明"的补位，仍在实测中。
 
-> **Two kinds of ads stay out of reach — not because our rules are incomplete, but because these apps bypass both of the only two layers this project has.** Those layers are local DNS filtering (VpnService) and accessibility-assisted tapping. Both limits below are properties of the approach, not bugs waiting to be fixed.
+> **Two kinds of ads stay out of reach — not because our rules are incomplete, but because these apps bypass both of the only two layers this project has.** Those layers are local DNS filtering (VpnService), accessibility-assisted tapping, and an optional on-device OCR fallback (screenshot + geometric candidates + recognition only). The first two limits below are properties of the approach, not bugs waiting to be fixed; OCR is the mitigation for the accessibility blind spot and is still being measured.
 
 ---
 
@@ -32,15 +32,16 @@
 
 - **实测结果**：微信在前台时，无障碍树里**只有 1 个节点**（根节点，0 个子节点）。遍历所有窗口（`getWindows()`，含窗口内容与其它窗口）结果一致。
 - 也就是说，我们**连"屏幕上有没有『跳过』按钮"都无从得知**，更谈不上点击。这也不是权限或配置能绕开的限制 —— 任何依赖无障碍读取界面的自动化在微信内都会失明。
-- **因此微信内**的开屏广告、小程序自营广告、朋友圈广告**都无法自动跳过**。
-
+- **因此微信内**的开屏广告、小程序自营广告、朋友圈广告**都无法被无障碍自动跳过**。
+- 第三层（OCR）不依赖无障碍树，能"看见"画面：小程序开屏广告的「广告 ⌄ 跳过」在截图里是可见的；实测已能定位到候选块，识别召回率仍在调优。
 
 > **Why accessibility automation cannot act inside WeChat**
 >
 > - **Measured:** with WeChat in the foreground, its accessibility tree contains exactly **one node** (the root, with zero children). Iterating every window (`getWindows()`, including window content and other windows) gives the same result.
 > - So we cannot even learn **whether a "Skip" button exists on screen**, let alone tap it. No permission or configuration works around this: any automation that reads the screen through accessibility is blind inside WeChat.
-> - **Consequently**, splash ads, mini-program ads and Moments ads inside WeChat **cannot be skipped automatically**.
-> - 
+> - **Consequently**, splash ads, mini-program ads and Moments ads inside WeChat **cannot be skipped by the accessibility layer**.
+- The OCR layer does not depend on the accessibility tree: it can *see* the picture. The "广告 ⌄ 跳过" control in mini-program splash ads is visible in screenshots; candidate regions are already located, and recognition recall is still being tuned.
+
 ---
 
 ## 3. 那还剩什么能用
@@ -75,10 +76,10 @@
 
 本文所有结论都来自**本机实测**，方法是一个只记录、不拦截的旁路工具（VpnService + 原样转发 DNS 报文，一个字节都不修改），以及一个只导出**控件属性**（类名 / id / 坐标 / 是否可点击 / 是否可见 / 文字长度）的界面结构记录器 —— 它不记录任何界面文字。
 
-本程序不采集、不上传任何数据；除"把放行的 DNS 查询转发给你设置的上游解析器"之外不发起网络连接。
+本程序不采集、不上传任何数据。网络活动只有三处，且全部由你显式开启：① 把放行的 DNS 查询转发给你设置的上游解析器；② 若你自己填了大模型 API（默认关闭），定期把**放行的域名列表**发给该接口做判断，结果只回到本机；③ 你主动点「导出并发送」时，才把自动学习名单交给系统邮件客户端。拦截记录与累计数只写在本机 `dnslog.tsv`，不联网。
 
 > **Where these numbers come from**
 >
 > Every figure above comes from measurement on a real device, using a passive recorder (VpnService forwarding DNS packets byte-for-byte, modifying nothing) and a node-structure dumper that exports **widget attributes only** (class / id / bounds / clickable / visible / text length) and never any on-screen text.
 >
-> This project collects and uploads nothing. Its only network activity is forwarding allowed DNS queries to the upstream resolver you configure.
+> This project collects and uploads nothing on its own. There are exactly three network-related behaviors, all opt-in: (1) forwarding allowed DNS queries to the upstream resolver you configure; (2) if you supply your own LLM API key (off by default), periodically sending the **list of allowed domains** to that endpoint for classification — the result stays on-device; (3) handing the auto-learned list to your system mail app only when you tap "Export and send". Block records and counters are written to a local `dnslog.tsv` file and never leave the device.

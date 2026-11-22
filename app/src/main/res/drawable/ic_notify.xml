@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!-- 通知栏小图标：必须是单色，系统只取 alpha 通道 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"

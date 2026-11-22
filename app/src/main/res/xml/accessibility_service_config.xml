@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   无障碍服务配置
 
@@ -18,7 +18,8 @@
     android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+      android:canTakeScreenshot="true"
     android:description="@string/acc_desc"
     android:notificationTimeout="100"
-    android:settingsActivity="com.baidukiller.lite.MainActivity"
+    android:settingsActivity="com.kalvsupu.disad.MainActivity"
     android:summary="@string/app_name" />

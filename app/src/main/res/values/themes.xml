@@ -3,4 +3,22 @@
     <style name="Theme.DisAD" parent="@android:style/Theme.DeviceDefault.Light">
         <item name="android:windowBackground">@android:color/background_light</item>
     </style>
+
+    <!-- 浅色对话框：白底黑字 -->
+    <style name="Theme.DisAD.Dialog" parent="@android:style/Theme.DeviceDefault.Light.Dialog.Alert">
+        <item name="android:windowBackground">@android:color/background_light</item>
+        <item name="android:textColorPrimary">#FF1D2330</item>
+        <item name="android:textColorSecondary">#FF6B7484</item>
+        <item name="android:colorAccent">#FF1E63D8</item>
+    </style>
+
+    <!-- 深色对话框：深底浅字（夜间模式下必须用这个，否则正文看不见） -->
+    <style name="Theme.DisAD.Dialog.Dark" parent="@android:style/Theme.DeviceDefault.Dialog.Alert">
+        <item name="android:windowBackground">#FF151A24</item>
+        <item name="android:backgroundDimAmount">0.66</item>
+        <item name="android:textColorPrimary">#FFE8ECF4</item>
+        <item name="android:textColorSecondary">#FF9BA4B4</item>
+        <item name="android:textColorAlertDialogListItem">#FFE8ECF4</item>
+        <item name="android:colorAccent">#FF4C8DFF</item>
+    </style>
 </resources>

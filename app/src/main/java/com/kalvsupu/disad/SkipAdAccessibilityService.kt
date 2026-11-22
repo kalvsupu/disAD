@@ -1,4 +1,4 @@
-package com.baidukiller.lite
+package com.kalvsupu.disad
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
@@ -18,46 +18,18 @@ import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.baidukiller.lite.vpn.AdBlockVpnService
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
+import android.graphics.Bitmap
+import android.os.Build
+import android.view.Display
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import android.widget.Toast
+import com.kalvsupu.disad.vpn.AdBlockVpnService
 
 /**
- * ============================================================================
- *  无障碍辅助（DNS 拦截的兜底）
- * ============================================================================
- *
- *  【定位：辅助，不是主力】
- *  域名拦截负责把广告从源头掐掉；无障碍只负责收尾，所以要求"快、准、少动"。
- *
- *  【识别规则（全部基于节点，绝不猜屏幕坐标）】
- *   ① 文字「跳过 / 关闭广告 / skip」出现在**右上角** → 直接点（任何情况都允许）
- *   ② 控件 id：用 root.packageName 拼 skip / skip_btn / tv_skip / btn_skip
- *   ③ 同样的文字出现在**屏幕顶部 22% 条带内** → 只有在下面任一条件成立时才点：
- *        · 屏幕上出现广告痕迹（广告 / 跳转详情页 / 摇一摇 / 转动手机 / 运营推广）
- *        · 当前窗口看起来像启动页
- *      这样既能覆盖"跳过键在左上角"（微信小程序类），
- *      又不会去点正文、聊天记录里偶然带"跳过"字样的内容。
- *   ④ 确认是广告后，右上角的小「关闭」控件 / 常见 close id
- *   ⑤ 老年人模式：**必须先确认屏幕上有广告痕迹**，才按广告专属词（关闭广告 / 跳过 /
- *      残忍拒绝 / 以后再说 / 不再提示）找关闭键。不含"取消 / 关闭"这类
- *      所有正常对话框都有的通用词，所以不会误关你正在写的笔记。
- *
- *  ⚠ 这里**没有**"点屏幕某个坐标试试"的兜底逻辑。曾经有过，实测代价是
- *    会点中 App 主界面的「+」等功能按钮 —— 猜错的代价远大于漏掉的代价。
- *
- *  【为什么不遍历整棵树】
- *  逐节点取 text / contentDescription / bounds / viewId 每个都是一次跨进程调用，
- *  1500 个节点 ≈ 7000 次 IPC，会把服务主线程和目标 App 一起拖死。
- *  现在用 findAccessibilityNodeInfosByText / ByViewId —— 一次调用让 App 自己去搜，
- *  单次扫描的 IPC 次数从 7000+ 降到 20 以内。
- *
- *  【速度】
- *  · 窗口一出现**立刻**扫一次，不用等定时器；
- *  · 前 3.5 秒每 250ms 扫一次（广告就在这几秒里），之后才指数退避到 1.5 秒省电；
- *  · 点击后静默 1.2 秒、跨窗口冷却 1 秒 —— 足够防连点，又不会让你觉得"它没反应"。
- *
- *  【计数】
- *  同一个窗口只算 1 个"跳过广告数"（内部另计点击次数）。
- * ============================================================================
  */
 class SkipAdAccessibilityService : AccessibilityService() {
 
@@ -71,6 +43,50 @@ class SkipAdAccessibilityService : AccessibilityService() {
         /** 跳过的广告数（同一个窗口只计一次） */
         @Volatile
         var skipCount: Int = 0
+    // ---------------- OCR 兜底（实验） ----------------
+    /** OCR 专用线程池：绝不占用无障碍回调线程（在主线程跑推理 = ANR） */
+    private val ocrPool: ExecutorService = Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "disad-ocr").also { it.isDaemon = true }
+    }
+    private val uiHandler = Handler(Looper.getMainLooper())
+
+    /** OCR 兜底：每窗口最多试几次、候选块上限、最小间隔 */
+    private val MAX_OCR_SHOTS = 3
+
+    /** OCR 配额窗口：每 8 秒最多 3 张截图（约 100ms/张，功耗可控） */
+    private val OCR_QUOTA_WINDOW_MS = 8_000L
+    private val MAX_OCR_CANDS = 4
+    private val OCR_MIN_GAP_MS = 2_500L
+    /** 距上次 OCR 超过这么久就算"新的一轮"，配额重置（小程序启动页会吃掉配额） */
+    private val OCR_WATCHDOG_MS = 4_000L
+
+    @Volatile
+    private var ocrBusy = false
+
+    /** 每个窗口最多试几次 OCR（第一次没命中，等界面变化再说） */
+    private var ocrShotsInWindow = 0
+    private var ocrPkg = ""
+    private var lastOcrAt = 0L
+
+    /** 本轮 OCR 配额的起点：每 8 秒重置一次截图次数，避免一个 App 只截 2 张就再也不截 */
+    private var ocrQuotaStartAt = 0L
+    /** 每次 OCR 请求的序号：回来的结果如果比当前旧，直接丢弃（防止状态卡在旧文案） */
+    private var ocrSeq = 0
+    /** 系统明确拒绝截图能力时记下原因，之后不再重试 */
+    @Volatile
+    private var ocrUnavailableReason: String? = null
+
+    /** 模型是否正在后台初始化 */
+    @Volatile
+    private var ocrInitializing = false
+
+    /** 当前挂着的看门狗（完成时取消，避免旧看门狗踩新请求） */
+    private var pendingWatchdog: Runnable? = null
+
+    /** 窗口代数：切换窗口/解绑时 +1，过期的 OCR 结果一律丢弃 */
+    @Volatile
+    private var ocrEpoch = 0
+    private var lastToastAt: Long = 0L
             private set
 
         /** 实际点击次数（排查用） */
@@ -84,8 +100,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
             private set
 
         /**
-         * 排查用的内部计数：收到过多少个界面事件、真正扫描过多少轮。
-         * **只写进 logcat，不在界面上显示** —— 用户没必要知道这些。
          */
         @Volatile
         var eventCount: Int = 0
@@ -108,19 +122,10 @@ class SkipAdAccessibilityService : AccessibilityService() {
         private const val FAST_INTERVAL_MS = 250L
 
         /**
-         * 慢速持续扫描的间隔（定时器兜底）。
-         *
-         * ★ 为什么不能扫几秒就收工：小程序、网页里的广告经常是**页面加载好几秒之后**
-         *   才渲染出来的，而我们原来只在窗口刚出现的几秒里高频扫，之后就停了。
-         *   现在改成：窗口属于目标 App 期间一直慢扫，直到切走或锁屏。
          */
         private const val SLOW_INTERVAL_MS = 800L
 
         /**
-         * App 主动发界面变化事件时，两次扫描之间至少间隔这么久。
-         *
-         * 广告出现的那一刻，App 几乎一定会发事件 —— 事件驱动是**最快**的路径，
-         * 所以这里只留一个很短的防抖下限（250ms），而不是等慢扫的 800ms。
          */
         private const val EVENT_MIN_INTERVAL_MS = 250L
 
@@ -138,20 +143,32 @@ class SkipAdAccessibilityService : AccessibilityService() {
 
         private const val CHANNEL_ALERT = "bk_lite_alert"
         private const val NOTIF_ALERT_ID = 1002
+        private const val NOTIF_ONGOING_ID = 1003
+        private const val CHANNEL_ONGOING = "disad_a11y_status"
+
+        /** VPN 起来了：撤掉无障碍这条（除非本来就是它自己显示） */
+        fun hideOngoingBecauseVpn() {
+            instance?.cancelOngoing()
+        }
+
+        /** VPN 停了：无障碍如果还在跑，把通知补回来 */
+        fun restoreOngoingIfNeeded() {
+            instance?.let { svc ->
+                if (Prefs.autoSkip(svc)) svc.showOngoingNotification()
+            }
+        }
+
+        /** 供界面调用：无痕开关切换后立刻刷新常驻通知 */
+        fun refreshOngoing() {
+            instance?.let { svc ->
+                if (Prefs.autoSkip(svc)) svc.showOngoingNotification() else svc.cancelOngoing()
+            }
+        }
 
         // ==================================================================
         //  ★ 隐私红线：界面上的文字绝不外泄
-        // ==================================================================
-        //  下面两个白名单是硬性防线，不是注释约定：
-        //  任何要写进 lastAction / 日志 / 通知栏的字符串，都必须先过 safeTag()，
-        //  不在白名单里的内容一律被替换成「规则」。
-        //
-        //  为什么需要它：无障碍能看到界面上的文字，一旦某个环节手滑把
-        //  「被点击控件的文字」传进来，用户的笔记标题、聊天内容就会出现在
-        //  状态卡片、通知栏（锁屏也能看到）和系统日志里。
-        //  这个白名单保证：**即使以后代码写错，也不可能把用户内容带出去。**
         private val ALLOWED_RULES = setOf(
-            "跳过", "跳过(id)", "跳过(顶部)", "跳过(顶部/精确)", "跳过(右下)", "跳过(角落图形)",
+            "跳过", "跳过(id)", "跳过(顶部)", "跳过(顶部/精确)", "跳过(右下)", "跳过(OCR)",
             "关闭(id)", "关闭", "关弹窗", "兜底"
         )
         private val ALLOWED_WORDS = setOf("跳过", "关闭")
@@ -229,16 +246,25 @@ class SkipAdAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         running = true
         instance = this
+        // 用户亲手开启（或系统重启服务）= 新的一轮，跳过计数从头算；
+        // 从后台切回界面不清零（重置点不放 Activity 里）。
+        skipCount = 0
+        clickCount = 0
         lastAction = "服务已连接"
         Log.i(TAG, "无障碍辅助已连接")
+        showOngoingNotification()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         running = false
         // ★ 这里不把 instance 置空：系统偶尔会"解绑又立刻重绑"，
         //   置空会让调试导出误报"无障碍服务未连接"，也会让状态卡片误判。
-        //   真正销毁时（onDestroy）才置空。
         lastAction = "服务已断开"
+        ocrEpoch++
+        pendingWatchdog?.let { uiHandler.removeCallbacks(it) }
+        pendingWatchdog = null
+        ocrBusy = false
+        cancelOngoing()
         Log.i(TAG, "无障碍辅助已断开")
         notifyAccessibilityLost()
         return super.onUnbind(intent)
@@ -274,14 +300,22 @@ class SkipAdAccessibilityService : AccessibilityService() {
         }
         // ★ 无障碍只在"拦截正在运行"时动作。
         //   否则会出现用户已经点了「停止拦截」，无障碍还在点东西的情况
-        //   （用户只能跑到系统设置里关掉无障碍，体验很差）。
-        if (!AdBlockVpnService.running) {
+        if (!AdBlockVpnService.running && !Prefs.a11yOnly(this)) {
             logGate(event, "拦截没有在运行")
             if (burstPkg.isNotEmpty()) stopBurst()
             return
         }
 
         val pkg = event.packageName?.toString() ?: return
+
+        // 换 App 了：OCR 兜底的次数重新计数
+        // ★ 换窗口/换 App：让还没回来的 OCR 结果作废（避免点到新界面）
+        ocrEpoch++
+        if (pkg != ocrPkg) {
+            ocrPkg = pkg
+            ocrShotsInWindow = 0
+            lastOcrAt = 0L
+        }
         val now = SystemClock.uptimeMillis()
 
         if (!inScope(pkg)) {
@@ -323,9 +357,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 扫描一次。
-     * @param force true = 定时器触发（目标 App 在前台期间一直慢扫），
-     *              不受"扫描间隔 / 窗口活跃期"限制，但冷却与次数上限仍然生效
      */
     private fun tryScan(now: Long, force: Boolean) {
         if (!running) return
@@ -361,7 +392,7 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     private fun windowDuration(): Long =
-        if (Prefs.elderMode(this)) ELDER_ACTIVE_WINDOW_MS else ACTIVE_WINDOW_MS
+        ACTIVE_WINDOW_MS
 
     /** 作用范围与 DNS 拦截保持一致（三个系别 + 老年人模式全局） */
     private fun inScope(pkg: String): Boolean {
@@ -372,11 +403,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 完全不碰的包。
-     *
-     * ★ 后半段是"内容 / 编辑类" App：这些界面里的「跳过」「广告」字样
-     *   往往是**用户自己的内容**，不是广告按钮。
-     *   系统笔记那次误点（自动点开了一篇笔记）就是因为没排除它们。
      */
     private val SYSTEM_PACKAGES = setOf(
         // 系统界面
@@ -432,9 +458,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     )
 
     /**
-     * 老年人模式才用的"广告专属"关闭词。
-     * 注意：**不含"取消"** —— 那是所有正常对话框都有的词。
-     * 而且这些词只有在"屏幕上确实有广告痕迹"时才会被使用。
      */
     private val ELDER_DISMISS_TEXTS = listOf(
         "关闭广告", "关闭此广告", "跳过广告", "跳过",
@@ -446,17 +469,13 @@ class SkipAdAccessibilityService : AccessibilityService() {
 
     // ==================================================================
     //  扫描
-    // ==================================================================
     private fun scan(root: AccessibilityNodeInfo, pkg: String, now: Long) {
         val dm = resources.displayMetrics
         val screenW = dm.widthPixels
         val screenH = dm.heightPixels
-        val elder = Prefs.elderMode(this)
 
         // ★ 关键安全阀："事件来自谁"和"活动窗口是谁"必须一致。
         //   否则会出现最荒唐的情况：事件是 A 发来的，我们却在 B 的界面上找按钮 ——
-        //   实测就发生过"事件来自负一屏，活动窗口其实是 disAD 自己"，
-        //   于是把 disAD 使用说明里的"跳过 / 广告"字样当成了广告痕迹。
         val rootPkg = pkgOf(root)
         if (rootPkg == packageName) return
         if (SYSTEM_PACKAGES.contains(rootPkg)) return
@@ -533,36 +552,32 @@ class SkipAdAccessibilityService : AccessibilityService() {
                 countIfSplash(); return
             }
         }
-        // ⑤ 老年人模式：确认是广告后，才按广告专属词找关闭键
-        if (elder && adLike) {
-            if (tryAct(findAnyDismiss(root), "关弹窗", "关闭")) {
-                countIfSplash(); return
-            }
-        }
-        // ⑦ ★ 最后一招：已确认是广告、前面全都没找到 → 点"角落里那块区域中的可点击控件"。
-        //    专治"跳过键是纯图形（没有文字、没有 id）"的广告；右上角、右下角都看。
-        if (adLike) {
-            if (tryAct(findCornerButton(root, screenW, screenH), "跳过(角落图形)", "跳过")) {
-                countIfSplash(); return
-            }
+        // ⑦ ★ 最后一招：OCR 兜底（实验，默认关）。
+        //
+        val fewNodes = try { root.childCount <= 1 } catch (_: Throwable) { false }
+        var ocrTriggered = false
+        if (Prefs.ocrFallback(this) && (adLike || splashLike || fewNodes)) {
+            ocrTriggered = true
+            lastAction = "正在用 OCR 找跳过键" + appSuffix(pkg)
+            requestOcrFallback(pkg, now)
         }
         // ⑥ 没点掉：把"为什么"说清楚（只记录，**不做任何坐标猜测**）
         //
-        //    ★ 这里原来有一段"点屏幕右上角"的坐标兜底，已经删掉。
-        //      实测代价：QQ音乐 7 次里有 1 次被它点中了主界面的「+」按钮。
-        //      而它想兜住的那些广告（跳过键是纯图片、节点里没有任何文字/id），
-        //      本来就无法与正常控件区分 —— 猜错的代价远大于漏掉的代价。
         countIfSplash()
-        if (foundButFailed) {
-            lastAction = "这个广告没能跳过" + appSuffix(pkg)
-            Log.i(TAG, "未跳过（找到控件但点击无效）pkg=$pkg 事件=$eventCount 扫描=$scanCount")
-        } else if (adLike || splashLike) {
-            lastAction = "发现广告，没能自动跳过" + appSuffix(pkg)
-            Log.i(
-                TAG,
-                "未跳过（没找到跳过键）pkg=$pkg marker=$adMarker splash=$splashLike " +
-                    "事件=$eventCount 扫描=$scanCount"
-            )
+        // ★ OCR 已经把"正在用 OCR 找跳过键"写进 lastAction 了，
+        //   这里再写一遍会把它覆盖掉 —— 结果状态永远停在"正在用"，
+        if (!ocrTriggered) {
+            if (foundButFailed) {
+                lastAction = "这个广告没能跳过" + appSuffix(pkg)
+                Log.i(TAG, "未跳过（找到控件但点击无效）pkg=$pkg 事件=$eventCount 扫描=$scanCount")
+            } else if (adLike || splashLike) {
+                lastAction = "发现广告，没能自动跳过（OCR 未开启）" + appSuffix(pkg)
+                Log.i(
+                    TAG,
+                    "未跳过（没找到跳过键）pkg=$pkg marker=$adMarker splash=$splashLike " +
+                        "事件=$eventCount 扫描=$scanCount"
+                )
+            }
         }
     }
 
@@ -582,13 +597,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 文字命中。
-     * @param zone ZONE_TOP_RIGHT / ZONE_TOP_BAND / ZONE_BOTTOM_BAND
-     * @param exactOnly 文字必须与关键词完全相等
-     *
-     * ★ 两道安全阀（系统笔记那次误点之后加的）：
-     *   1. 文字必须**短**（≤ 8 字）—— 真按钮就写"跳过"，内容正文不可能这么短；
-     *   2. 只允许出现在明确的两个条带里（顶部 / 右下角），不是"整屏任意位置"。
      */
     private fun findSkipByText(
         root: AccessibilityNodeInfo,
@@ -645,9 +653,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 关闭按钮的 id 命中。
-     * 很多广告的 × 是一张没有文字、没有描述的图片，只能靠 id 认出来 ——
-     * 这也是"居中弹窗右上角那个 × 点不到"的正解（用节点，不猜坐标）。
      */
     private fun findCloseById(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val pkg = try { root.packageName?.toString() } catch (_: Throwable) { null } ?: return null
@@ -698,13 +703,7 @@ class SkipAdAccessibilityService : AccessibilityService() {
 
     // ==================================================================
     //  判定与动作
-    // ==================================================================
     /**
-     * 节点是否"真的在屏幕上"。
-     *
-     * ★ 这条检查是必需的安全阀：不可见（vis=0）的节点，平台返回的坐标是**残缺的**
-     *   （实测见过 bottom=0、right=-54 这种），拿它去 tapCenter 会点到莫名其妙的位置。
-     *   所以：不可见的节点一律不点。
      */
     private fun isUsable(node: AccessibilityNodeInfo): Boolean = try {
         node.isVisibleToUser
@@ -742,13 +741,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 是不是"启动页"窗口。
-     *
-     * ★ 这里踩过一个坑：老写法只要类名含 "launch" 就算启动页，
-     *   而微信主界面叫 `com.tencent.mm.ui.LauncherUI` —— 于是微信一打开就被
-     *   判定成启动页（当时还有坐标兜底，正好点中微信的「+」号）。
-     *   所以现在：**先排除 Launcher / Main 这类主界面，再分弱级**；
-     *   而"启动页"现在只用来放宽文字匹配的位置条件，不再用来猜坐标。
      */
     private fun looksLikeSplashWindow(cls: String): Boolean = splashLevel(cls) > 0
 
@@ -780,9 +772,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     ): Boolean {
         // ★ 顺序很重要，实测踩过：
         //   广告的「跳过」经常是自绘/自定义控件，给它所在的容器发 ACTION_CLICK
-        //   可能被忽略；更糟的是**会一路往上点到别的处理器**——
-        //   QQ音乐那种广告的最外层全屏容器也是 clickable，一路往上就会点到它。
-        //   所以文字命中的按钮，一律先按它自己的坐标点一下（那是手指会落的位置）。
         val ok = tapCenter(node) || clickNode(node)
         if (!ok) return false
         // 界面上只说人话；命中的具体规则写进 logcat，供排查用
@@ -798,12 +787,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 这个节点的文字**像不像一个"跳过"按钮**。
-     *
-     * 为什么需要这条检查：只判断"节点里含不含'跳过'"，会把**内容文字**误判成按钮 ——
-     * 曾经因此在系统笔记里把一条标题含"跳过"的笔记当成广告按钮点开。
-     * 真正的跳过按钮文字一定很短（"跳过" / "跳过 3" / "跳过广告" / "skip"），
-     * 所以这里要求：**文字长度 ≤ 8 个字，且包含关键词**。
      */
     private fun looksLikeSkipButtonText(
         node: AccessibilityNodeInfo,
@@ -812,9 +795,15 @@ class SkipAdAccessibilityService : AccessibilityService() {
     ): Boolean {
         val t = textOf(node).trim()
         if (t.isEmpty() || t.length > 8) return false
+        // ★ 播放器里的「跳过片头 / 跳过片尾 / 跳过下一集」是用户自己想点的功能按钮，
+        //   不是广告跳过键。点了会把正常播放位置跳掉（B 站暂停页被误判就是这一类）。
+        if (PLAYER_SKIP_WORDS.any { t.contains(it) }) return false
         if (exactOnly) return t.equals(keyword, ignoreCase = true)
         return t.contains(keyword, ignoreCase = true)
     }
+
+    /** 这些词出现在「跳过」按钮里说明它是播放器功能，不是广告 */
+    private val PLAYER_SKIP_WORDS = listOf("片头", "片尾", "下一集", "下一期", "正片", "预告", "弹幕")
 
     /** 其它窗口的根节点（带 500ms 缓存，避免每次扫描都去问一遍系统） */
     private var cachedOtherRoots: List<AccessibilityNodeInfo> = emptyList()
@@ -838,19 +827,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 在所有窗口里搜：先搜活动窗口，没有命中再遍历其它窗口。
-     *
-     * 为什么需要：有些广告是被放在**独立窗口**里的（悬浮窗、独立 Activity 覆盖层），
-     * `rootInActiveWindow` 拿不到它，于是"看得见、点不到"。
-     *
-     * ★★ 2026-10-01 补的兜底（这是"看得见点不到"的真正元凶）：
-     *    `findAccessibilityNodeInfosByText` 在部分系统 / 部分节点上**只匹配 text，
-     *    不匹配 contentDescription** —— 而自绘广告的「跳过」经常只有描述、没有 text。
-     *    实测证据：维护工具走一遍整棵树能看到
-     *        ViewGroup | [938,108][1008,177] | click=0 | vis=1 | len=4 | 跳过
-     *    但我们用 API 搜就是搜不到，于是状态卡片一直写"没找到跳过键"。
-     *    所以：快搜一无所获、且这个窗口确实像广告时，**整棵树走一遍**（限量 200 个节点），
-     *    拿 text+描述 合起来匹配。只在需要时走，不会每次都遍历。
      */
     private fun searchAll(
         root: AccessibilityNodeInfo,
@@ -897,56 +873,218 @@ class SkipAdAccessibilityService : AccessibilityService() {
         return out
     }
 
+    // ==================================================================
+    //  OCR 兜底
     /**
-     * ★ 最后一招（只在**已经确认是广告**时才用）：找"角落那块固定区域里的可点击小控件"。
-     *
-     * 为什么需要它：有些广告的「跳过」是**纯图形** —— 节点里既没有文字也没有 id
-     * （维护工具抓到的那次是 `ViewGroup click=0 len=4 跳过`，但另一个版本连文字都没有）。
-     * 纯靠文字/id 永远找不到，而那块区域里确实存在一个可点击控件。
-     *
-     * ★ 要同时看**两个角**：跳过键的位置各家用得不一样 ——
-     *   · QQ音乐 / 多数 SDK：**右上角**（实测 [938,108][1008,177]）
-     *   · B站：**右下角**（截图里「跳过 2」在 x≈87%、y≈91%）
-     *   老版本就是因为只放宽了顶部条带，把 B站 整条漏掉过。
-     *
-     * 为什么这不是"猜屏幕坐标"：
-     *   · 必须先确认屏幕上**确实有广告水印**（adLike）；
-     *   · 点的是**真实存在的可点击控件**的几何中心，不是硬编码的坐标；
-     *   · 区域被收得很紧（见下面四个框），且控件本身不超过 260×260。
-     *
-     * 为什么以前删掉了坐标兜底、现在又加回来：老写法是"只要窗口像启动页就点右上角"，
-     * 于是在 QQ音乐**主界面**上点中了「+」号。现在多了"必须已确认是广告"这道门，
-     * 主界面根本进不来。
      */
-    private fun findCornerButton(
-        root: AccessibilityNodeInfo,
-        screenW: Int,
-        screenH: Int
-    ): AccessibilityNodeInfo? {
-        if (!walkAllowed) return null
-        // 每个框：中心 x 的下限/上限、中心 y 的下限/上限（屏幕比例）
-        val bands = listOf(
-            floatArrayOf(0.80f, 0.98f, 0.03f, 0.09f),   // 右上角
-            floatArrayOf(0.70f, 0.99f, 0.84f, 0.96f)    // 右下角（B站那种）
-        )
-        for ((node, _) in ensureWalk(root)) {
-            val clickable = try { node.isClickable } catch (_: Throwable) { false }
-            if (!clickable) continue
-            if (!isUsable(node)) continue
-            val r = boundsOf(node) ?: continue
-            if (r.width() <= 0 || r.height() <= 0) continue
-            if (r.width() > 260 || r.height() > 260) continue
-            val cx = r.exactCenterX()
-            val cy = r.exactCenterY()
-            for (b in bands) {
-                if (cx >= screenW * b[0] && cx <= screenW * b[1] &&
-                    cy >= screenH * b[2] && cy <= screenH * b[3]
-                ) {
-                    return node
+    private fun requestOcrFallback(pkg: String, now: Long) {
+        if (Build.VERSION.SDK_INT < 30) return          // takeScreenshot 要 Android 11+
+        // 系统明确拒绝能力后不再反复尝试（避免每次扫描都白跑一遍）
+        if (ocrUnavailableReason != null) return
+        if (ocrBusy) return
+        // 配额重置：换 App、或距本轮起点已超过 8 秒。
+        // 原来只在"距上次截图超过 3 秒"时才重置，可定时扫描每 600ms 就扫一次，
+        // 于是同一 App 只截得 2 张，之后再出现广告也不会再截图 —— 就是"OCR 只在开屏时截图"。
+        if (pkg != ocrPkg || now - ocrQuotaStartAt > OCR_QUOTA_WINDOW_MS) {
+            ocrPkg = pkg
+            ocrQuotaStartAt = now
+            ocrShotsInWindow = 0
+        }
+        if (ocrShotsInWindow >= MAX_OCR_SHOTS) return
+        if (now - lastOcrAt < OCR_MIN_GAP_MS) return
+
+        // ★ 模型初始化放到后台线程：10.9MB 模型 + 建 session 放在无障碍回调/主线程会卡顿
+        if (!TextRec.ready) {
+            if (ocrInitializing) {
+                lastAction = "OCR 模型首次加载中…"
+                return
+            }
+            ocrInitializing = true
+            lastAction = "OCR 模型首次加载中…"
+            ocrPool.execute {
+                val ok = TextRec.init(this)
+                ocrInitializing = false
+                if (!ok) {
+                    ocrUnavailableReason = "模型加载失败"
+                    lastAction = "OCR 模型加载失败"
                 }
+                Log.i(TAG, "OCR 模型后台初始化完成：ok=$ok 耗时=${TextRec.loadMs}ms")
+            }
+            return
+        }
+
+        ocrBusy = true
+        ocrShotsInWindow++
+        lastOcrAt = now
+        val seq = ++ocrSeq
+        val watchdog = Runnable {
+            if (seq == ocrSeq && ocrBusy) {
+                ocrBusy = false
+                lastAction = "OCR 超时没返回（已放弃）"
+                Log.w(TAG, "OCR 兜底：看门狗触发（seq=$seq），强制复位")
             }
         }
-        return null
+        pendingWatchdog = watchdog
+        uiHandler.postDelayed(watchdog, OCR_WATCHDOG_MS)
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, ocrPool, object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    handleOcrShot(result, pkg, seq)
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    ocrBusy = false
+                    if (errorCode == 3) {
+                        // code=3 = 系统限流（两次截图间隔太短）。不算失败，1.2 秒后重试一次。
+                        lastAction = "OCR 被系统限流，稍后重试"
+                        Log.i(TAG, "OCR 兜底：被限流（code=3），1.2 秒后重试")
+                        uiHandler.postDelayed({
+                            if (Prefs.ocrFallback(this@SkipAdAccessibilityService)) {
+                                lastOcrAt = 0L
+                                requestOcrFallback(pkg, SystemClock.uptimeMillis())
+                            }
+                        }, 1_200L)
+                    } else {
+                        lastAction = "OCR 截图失败（code=$errorCode）"
+                        // 不是限流 = 能力不可用（缺少 canTakeScreenshot / 系统拒绝）
+                        ocrUnavailableReason = "系统拒绝截图（code=$errorCode）"
+                        lastAction = "OCR 不可用：系统拒绝截图（code=$errorCode）"
+                        Log.w(TAG, "OCR 能力不可用，已关闭 OCR 兜底（code=$errorCode）")
+                        Log.i(TAG, "OCR 兜底：截图失败 code=$errorCode")
+                    }
+                }
+            })
+        } catch (t: Throwable) {
+            ocrBusy = false
+            Log.w(TAG, "OCR 兜底：调用截图异常 ${t.message}")
+        }
+    }
+
+    private fun handleOcrShot(result: ScreenshotResult, pkg: String, seq: Int) {
+        // 只处理当前这一次请求；窗口代数变了也直接丢弃
+        if (seq != ocrSeq) return
+        val epoch = ocrEpoch
+        val t0 = SystemClock.uptimeMillis()
+        var bmp: Bitmap? = null
+        var hb: android.hardware.HardwareBuffer? = null
+        val crops = ArrayList<Bitmap>()
+        try {
+            hb = result.hardwareBuffer
+            bmp = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)
+                ?.copy(Bitmap.Config.ARGB_8888, false)
+            val src = bmp ?: run {
+                lastAction = "OCR 截图位图为空"
+                return
+            }
+
+            val cands = PillFind.find(src)
+            if (cands.isEmpty()) {
+                lastAction = "OCR 没找到候选块"
+                Log.i(TAG, "OCR 兜底：没有候选块")
+                return
+            }
+
+            val boxes = ArrayList<PillFind.Cand>()
+            for (c in cands.take(MAX_OCR_CANDS)) {
+                val x0 = c.x0.coerceAtLeast(0)
+                val y0 = c.y0.coerceAtLeast(0)
+                val x1 = c.x1.coerceAtMost(src.width)
+                val y1 = c.y1.coerceAtMost(src.height)
+                if (x1 - x0 < 10 || y1 - y0 < 8) continue
+                crops.add(Bitmap.createBitmap(src, x0, y0, x1 - x0, y1 - y0))
+                boxes.add(c)
+            }
+            var target: PillFind.Cand? = null
+            for (i in crops.indices) {
+                val r = TextRec.recognize(crops[i])
+                val txt = r?.first ?: continue
+                if (r.second < 0.45f) continue
+                if (txt.contains("跳过") || txt.contains("关闭广告") || txt.contains("免广告")) {
+                    target = boxes[i]
+                    break
+                }
+            }
+            val ms = SystemClock.uptimeMillis() - t0
+            if (target == null) {
+                lastAction = "OCR 看了 ${crops.size} 块，没认出跳过键（${ms}ms）"
+                Log.i(TAG, "OCR 兜底：${crops.size} 块都没读到跳过（${ms}ms）")
+                return
+            }
+            val cx = target.cx.toFloat()
+            val cy = target.cy.toFloat()
+            Log.i(TAG, "OCR 兜底命中：$target → ($cx,$cy) 耗时 ${ms}ms")
+
+            // ★ 点击前再核验一次：请求没过期、窗口没换、开关还开着、服务还在
+            uiHandler.post {
+                val stillValid = seq == ocrSeq &&
+                    epoch == ocrEpoch &&
+                    pkg == ocrPkg &&
+                    Prefs.ocrFallback(this) &&
+                    Prefs.autoSkip(this) &&
+                    running
+                if (!stillValid) {
+                    Log.i(TAG, "OCR 结果已过期（窗口/开关变化），丢弃这次点击")
+                    lastAction = "OCR 结果已过期，已放弃"
+                    return@post
+                }
+                val tapped = tapAt(cx, cy)
+                if (tapped) {
+                    onTapped(pkg, SystemClock.uptimeMillis(), "跳过(OCR)")
+                } else {
+                    Log.w(TAG, "OCR 兜底：点击注入失败")
+                }
+            }
+        } catch (t: Throwable) {
+            lastAction = "OCR 异常：${t.javaClass.simpleName}"
+            Log.w(TAG, "OCR 兜底异常：${t.message}")
+        } finally {
+            // 统一释放：HardwareBuffer、裁剪图、原图、看门狗、忙碌标记
+            try {
+                hb?.close()
+            } catch (_: Throwable) {
+            }
+            for (b in crops) {
+                try {
+                    b.recycle()
+                } catch (_: Throwable) {
+                }
+            }
+            try {
+                bmp?.recycle()
+            } catch (_: Throwable) {
+            }
+            pendingWatchdog?.let { uiHandler.removeCallbacks(it) }
+            pendingWatchdog = null
+            ocrBusy = false
+        }
+    }
+    private fun tapAt(x: Float, y: Float): Boolean {
+        return try {
+            val path = Path().apply { moveTo(x, y) }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 55))
+                .build()
+            dispatchGesture(gesture, null, null)
+        } catch (t: Throwable) {
+            Log.w(TAG, "注入点击失败：${t.message}")
+            false
+        }
+    }
+    /** 每次真的点掉一个广告，弹一条很短的小提示（可在设置里关掉） */
+    private fun showSkipToast(pkg: String) {
+        try {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastToastAt < 700L) return      // 连着点多个广告时别刷屏
+            lastToastAt = now
+            val label = try {
+                val pm = packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            } catch (_: Throwable) {
+                pkg
+            }
+            Toast.makeText(this, "已跳过 · $label", Toast.LENGTH_SHORT).show()
+        } catch (_: Throwable) {
+        }
     }
 
     private fun onTapped(pkg: String, now: Long, label: String) {
@@ -959,19 +1097,12 @@ class SkipAdAccessibilityService : AccessibilityService() {
         globalCooldownUntil = now + GLOBAL_COOLDOWN_MS
         suppressUntil = now + SUPPRESS_AFTER_CLICK_MS
         lastAction = label
+        if (Prefs.skipToast(this)) showSkipToast(pkg)
+        showOngoingNotification()
         Log.i(TAG, "$label（跳过 $skipCount 个 / 点击 $clickCount 次）")
     }
 
     /**
-     * 给"按钮自己或它紧挨着的容器"发 ACTION_CLICK。
-     *
-     * ★ 只认**包住自己、且没有大得离谱**的容器。
-     *   实测教训（QQ音乐那种广告）：
-     *     跳过按钮 [938,108][1008,177]（本身不可点击）
-     *       └ 父容器 [909,108][1037,177]（可点击，128×69）  ← 这才是该点的
-     *          └ …一路往上…
-     *             └ 全屏容器 [0,0][1080,2400]（也可点击）    ← 点它等于点了整个页面
-     *   不加限制地往上找，就可能点到全屏容器上（那是"点广告本体"的入口）。
      */
     private fun clickNode(node: AccessibilityNodeInfo): Boolean {
         val nodeRect = boundsOf(node) ?: return false
@@ -1013,13 +1144,6 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 模拟一次点按。
-     *
-     * 只在**已经找到一个写着「跳过 / 关闭」的节点**、但它所在的容器不可点击时使用，
-     * 点的是那个节点自己的中心 —— 不做任何"屏幕坐标猜测"。
-     *
-     * 时长 55ms：太短（<30ms）在部分 ROM 上会被识别成异常触摸，表现为按钮"按住不放"；
-     * 太长则可能被广告识别成长按。
      */
     private fun gestureTap(x: Float, y: Float): Boolean {
         return try {
@@ -1035,6 +1159,57 @@ class SkipAdAccessibilityService : AccessibilityService() {
     }
 
     // ==================================================================
+    // ==================================================================
+    private fun showOngoingNotification() {
+        try {
+            if (!Prefs.autoSkip(this) || !running) {
+                cancelOngoing()
+                return
+            }
+            // ★ 和 DNS 通知合并：VPN 在跑时，状态统一由 DNS 那条显示（含拦截数/跳过数/无障碍状态）
+            if (AdBlockVpnService.running) {
+                cancelOngoing()
+                return
+            }
+            val nm = getSystemService(NotificationManager::class.java) ?: return
+            if (nm.getNotificationChannel(CHANNEL_ONGOING) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(
+                        CHANNEL_ONGOING,
+                        "无障碍跳过状态",
+                        NotificationManager.IMPORTANCE_LOW
+                    ).apply {
+                        setShowBadge(false)
+                        description = "显示「无障碍跳过」正在运行"
+                    }
+                )
+            }
+            val open = PendingIntent.getActivity(
+                this, 0,
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val n = Notification.Builder(this, CHANNEL_ONGOING)
+                .setContentTitle("无障碍跳过：运行中")
+                .setContentText("已跳过 $skipCount 次 · 只关闭广告弹窗，不读界面文字")
+                .setSmallIcon(R.drawable.ic_notify)
+                .setOngoing(true)
+                .setShowWhen(false)
+                .setContentIntent(open)
+                .build()
+            nm.notify(NOTIF_ONGOING_ID, n)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun cancelOngoing() {
+        try {
+            getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ONGOING_ID)
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun notifyAccessibilityLost() {
         if (!Prefs.autoSkip(this)) return
         try {

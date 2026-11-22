@@ -210,3 +210,44 @@ galileotelemetry.tencent.com
 
 
 
+
+# ---------------------------------------------------------------------------
+#  实测补充（来自自动学习 + 真实拦截日志，2026-11）
+#
+#  这些域名都是"广告统计 / 广告交易 / 拉流素材"类，出现在自动学习名单里；
+#  直接并入默认名单，用户不必等自动学习慢慢攒。
+# ---------------------------------------------------------------------------
+ad-log-upload.mihoyo.com
+ys-log-upload.mihoyo.com
+adx-micro.statisticslinks.com
+adx-strategy-api-cn.statisticslinks.com
+datk.statisticslinks.com
+mores.statisticslinks.com
+aeventlog.beacon.qq.com
+bddt-sdk.adwangmai.com
+cpc-service-square.iggrowth.cn
+s.1rtb.net
+sdk.1rtb.net
+ssp.1rtb.com
+# ---------------------------------------------------------------------------
+#  实测补充（2026-11-22，来自用户手机真实 DNS 日志，283 个域名逐条过筛）
+#
+#  nadvideo2 / pms-cdn：百度信息流与推广物料。日志里 nadvideo2 单次会话 29 次，
+#  却一直是"放行"。百度 App 正常视频走别的域名，与这两个无关。
+#  union-*.yy.com：YY / 虎牙广告联盟的素材代理、接入点与穿透。
+#  cpc-service-square.58iclick.com：58 同城 CPC 点击回传（同族的 iggrowth 已在上面）。
+#  ada.baidu.com：百度广告服务接口。
+#
+#  ⚠ 同一份日志里**刻意没加**的（看着像广告，其实是正常业务，加了会白屏/弹验证）：
+#      tb1/tb3/tb4.bdstatic.com、tb-video.bdstatic.com   百度通用图片/视频 CDN
+#      sofire.baidu.com、sfp.safe.baidu.com              百度风控
+#      weatherapi.market.xiaomi.com、app.market.xiaomi.com  小米应用商店
+#      now / gss0 / pic.rmb.bdstatic.com、feed-image.baidu.com  正常资源
+# ---------------------------------------------------------------------------
+nadvideo2.baidu.com
+pms-cdn.bdstatic.com
+union-media-proxy.yy.com
+union-ap-ipv6.yy.com
+union-grtn-stun.yy.com
+cpc-service-square.58iclick.com
+ada.baidu.com
